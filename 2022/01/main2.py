@@ -1,5 +1,5 @@
 input_file = "./input.txt"
-output_file = "./output1.txt"
+output_file = "./output2.txt"
 
 
 def write_output(value):
