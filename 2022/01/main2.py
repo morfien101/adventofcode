@@ -22,4 +22,5 @@ with open(input_file, "r") as input:
 
         current_calories += int(line.strip())
 
+elves.sort()
 write_output(sum(elves[-3:]))
