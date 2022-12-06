@@ -1,12 +1,14 @@
+import base64
+
 input_file = "./input.txt"
 output_file = "./output2.txt"
 
 
-def write_output(value):
-    global output_file
+def write_output(file: str, value: str):
     print(f"{value}")
-    with open(output_file, "w") as output:
-        output.write(f"{value}")
+    with open(file, "wb") as output:
+        out = base64.b64encode(f"{value}".encode("utf8"))
+        output.write(out)
 
 
 highest_calories = 0
@@ -23,4 +25,4 @@ with open(input_file, "r") as input:
         current_calories += int(line.strip())
 
 elves.sort()
-write_output(sum(elves[-3:]))
+write_output(output_file, sum(elves[-3:]))

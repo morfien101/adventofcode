@@ -1,12 +1,14 @@
+import base64
+
 input_file = "./input.txt"
 output_file = "./output1.txt"
 
 
-def write_output(value):
-    global output_file
+def write_output(file: str, value: str):
     print(f"{value}")
-    with open(output_file, "w") as output:
-        output.write(f"{value}")
+    with open(file, "wb") as output:
+        out = base64.b64encode(f"{value}".encode("utf8"))
+        output.write(out)
 
 
 with open(input_file, "r") as input:
@@ -52,4 +54,4 @@ for game in games:
         total_points += points["win"] + points[shapes[me]]
 
 
-write_output(total_points)
+write_output(output_file, total_points)

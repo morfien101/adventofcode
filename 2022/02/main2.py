@@ -1,12 +1,15 @@
+import base64
+
+
+def write_output(file: str, value: str):
+    print(f"{value}")
+    with open(file, "wb") as output:
+        out = base64.b64encode(f"{value}".encode("utf8"))
+        output.write(out)
+
+
 input_file = "./input.txt"
 output_file = "./output2.txt"
-
-
-def write_output(value):
-    global output_file
-    print(f"{value}")
-    with open(output_file, "w") as output:
-        output.write(f"{value}")
 
 
 def shape_selector(outcome: str, shape: str) -> str:
@@ -70,4 +73,4 @@ for game in games:
         total_points += points["win"] + points[my_shape]
 
 
-write_output(total_points)
+write_output(output_file, total_points)
