@@ -1,3 +1,7 @@
 jupyterlab
 jupyterlab_widgets
 ipywidgets
+matplotlib
+numpy
+scipy
+PyQt5
