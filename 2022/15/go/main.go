@@ -8,8 +8,6 @@ import (
 	"strings"
 	"sync"
 	"time"
-
-	"github.com/barkimedes/go-deepcopy"
 )
 
 type int64Set struct {
@@ -38,21 +36,21 @@ func (s *int64Set) values() []int64 {
 }
 
 type signal struct {
-	sx       int64
-	sy       int64
-	bx       int64
-	by       int64
-	distance int64
-	coverage map[int64][]int64
+	sx       int
+	sy       int
+	bx       int
+	by       int
+	distance int
+	coverage map[int][]int
 }
 
-func newSignal(sx, sy, bx, by int64) *signal {
+func newSignal(sx, sy, bx, by int) *signal {
 	s := &signal{
 		sx:       sx,
 		sy:       sy,
 		bx:       bx,
 		by:       by,
-		coverage: map[int64][]int64{},
+		coverage: map[int][]int{},
 	}
 	s.setDistance()
 	return s
@@ -63,8 +61,8 @@ func (sig *signal) setDistance() {
 }
 
 func (sig *signal) generateCoverage() {
-	coverRaw := map[int64][]int64{}
-	current := map[string]int64{"x": sig.sx, "y": sig.sy}
+	coverRaw := map[int][]int{}
+	current := map[string]int{"x": sig.sx, "y": sig.sy}
 
 	coverRaw[current["y"]+sig.distance] = append(coverRaw[current["y"]+sig.distance], current["x"])
 	coverRaw[current["y"]-sig.distance] = append(coverRaw[current["y"]-sig.distance], current["x"])
@@ -85,14 +83,14 @@ func (sig *signal) generateCoverage() {
 	}
 }
 
-func positive(in int64) int64 {
+func positive(in int) int {
 	if in < 0 {
 		return in * -1
 	}
 	return in
 }
 
-func distance(sx, sy, rx, ry int64) int64 {
+func distance(sx, sy, rx, ry int) int {
 	return positive(sx-rx) + positive(sy-ry)
 }
 
@@ -108,138 +106,25 @@ func deDup[T string | int | int64](sliceList []T) []T {
 	return list
 }
 
-func atoi64(in string) int64 {
-	i, _ := strconv.ParseInt(in, 10, 64)
-	return i
-}
-
 func digest_input(input string) []*signal {
 	output := make([]*signal, 0)
 
 	matcher := regexp.MustCompile(`x=(?P<sensor_x>-?[0-9]+), y=(?P<sensor_y>-?[0-9]+): closest beacon is at x=(?P<beacon_x>-?[0-9]+), y=(?P<beacon_y>-?[0-9]+)`)
 	for _, line := range strings.Split(input, "\n") {
-		// matches := make(map[string]string)
 		m := matcher.FindStringSubmatch(line)
-		m1 := atoi64(m[1])
-		m2 := atoi64(m[2])
-		m3 := atoi64(m[3])
-		m4 := atoi64(m[4])
+		m1, _ := strconv.Atoi(m[1])
+		m2, _ := strconv.Atoi(m[2])
+		m3, _ := strconv.Atoi(m[3])
+		m4, _ := strconv.Atoi(m[4])
 		output = append(output, newSignal(m1, m2, m3, m4))
 	}
 	return output
 }
 
-type mapWriter struct {
-	id   int64
-	data []string
-}
-
-func limitedGid(limit int64) map[int64][]string {
-	output := map[int64][]string{}
-	fmt.Println("Building template")
-
-	slicer := func(limit int64) []string {
-		templateSlice := make([]string, limit)
-		var idx int64
-		for idx = 0; idx < limit; idx++ {
-			templateSlice[idx] = "x"
-		}
-		return templateSlice
-	}
-
-	fmt.Println("Setup queue")
-	wg := sync.WaitGroup{}
-	wgMapWriter := sync.WaitGroup{}
-
-	keysChan := make(chan int64, runtime.NumCPU()-1)
-
-	mapWriterQueue := make(chan *mapWriter, 1)
-
-	wgMapWriter.Add(1)
-	go func(in chan *mapWriter) {
-		for payload := range in {
-			output[payload.id] = payload.data
-		}
-		wgMapWriter.Done()
-	}(mapWriterQueue)
-
-	wg.Add(1)
-	go func(in chan int64, out chan *mapWriter) {
-		for id := range in {
-			wg.Add(1)
-			go func(id int64, out chan *mapWriter) {
-				if id%1000 == 0 {
-					println("Got ID:", id)
-				}
-				out <- &mapWriter{
-					id:   id,
-					data: slicer(limit),
-				}
-				wg.Done()
-			}(id, out)
-		}
-		wg.Done()
-	}(keysChan, mapWriterQueue)
-
-	var idx int64
-	for idx = 0; idx < limit; idx++ {
-		keysChan <- idx
-	}
-	close(keysChan)
-	fmt.Println("Waiting for grid.")
-	wg.Wait()
-	close(mapWriterQueue)
-	wgMapWriter.Wait()
-	return output
-}
-
-func testString(limit int64) {
-	fmt.Println("Starting Generator")
-	tStart := time.Now()
-	templateSlice := make([]string, limit)
-	var idx int64
-	for idx = 0; idx < limit; idx++ {
-		templateSlice[0] = "x"
-	}
-	tStop := time.Since(tStart)
-	fmt.Println("time:", tStop)
-
-	templateSlice[limit-100000] = "."
-
-	fmt.Println("Starting finder")
-	tStart = time.Now()
-	for x, v := range templateSlice {
-		if v == "." {
-			fmt.Printf("Found at %d,%d\n", x, 1)
-		}
-	}
-	tStop = time.Since(tStart)
-	fmt.Println("time:", tStop)
-
-	fmt.Println("Starting deepcopy")
-	tStart = time.Now()
-	DCtemplateSlice := deepcopy.MustAnything(templateSlice).([]string)
-
-	tStop = time.Since(tStart)
-	fmt.Println("time:", tStop)
-
-	templateSlice[limit-100000] = "."
-
-	fmt.Println("Starting finder")
-	tStart = time.Now()
-	for x, v := range DCtemplateSlice {
-		if v == "." {
-			fmt.Printf("Found at %d,%d\n", x, 1)
-		}
-	}
-	tStop = time.Since(tStart)
-	fmt.Println("time:", tStop)
-}
-
 type worker struct {
-	yAxisQueue chan int64
-	output     chan []int64
-	f          func(int64) ([][]int64, bool)
+	yAxisQueue chan int
+	output     chan []int
+	f          func(int) ([][]int, bool)
 	id         int
 	wg         *sync.WaitGroup
 }
@@ -257,12 +142,12 @@ func (w *worker) start() {
 }
 
 // Call this function
-func findDeadZones(signals []*signal, limit int64, testMode bool) [][]int64 {
-	found := [][]int64{}
+func findDeadZones(signals []*signal, limit int, testMode bool) [][]int {
+	found := [][]int{}
 
 	// Queues
-	yAxisQueue := make(chan int64, 100)
-	zoneFoundQueue := make(chan []int64, 1)
+	yAxisQueue := make(chan int, 100)
+	zoneFoundQueue := make(chan []int, 1)
 
 	// WaitGroups
 	wgFeeder := sync.WaitGroup{}
@@ -270,10 +155,10 @@ func findDeadZones(signals []*signal, limit int64, testMode bool) [][]int64 {
 	wgWriter := sync.WaitGroup{}
 
 	// Finder Functions
-	finder := func(y int64) ([][]int64, bool) {
-		output := [][]int64{}
-		var x int64
-		for x = 0; x <= limit; x++ {
+	finder := func(y int) ([][]int, bool) {
+		fmt.Println("Checking y", y)
+		output := [][]int{}
+		for x := 0; x <= limit; x++ {
 			withinZone := []bool{}
 			for _, signal := range signals {
 				currentDistance := distance(signal.sx, signal.sy, x, y)
@@ -291,7 +176,7 @@ func findDeadZones(signals []*signal, limit int64, testMode bool) [][]int64 {
 				}
 			}
 			if found {
-				output = append(output, []int64{x, y})
+				output = append(output, []int{x, y})
 			}
 		}
 		return output, len(output) > 0
@@ -299,9 +184,8 @@ func findDeadZones(signals []*signal, limit int64, testMode bool) [][]int64 {
 
 	// Start filling the y queue for the workers
 	wgFeeder.Add(1)
-	go func(feeder chan int64) {
-		var y int64
-		for y = 0; y <= limit; y++ {
+	go func(feeder chan int) {
+		for y := 0; y <= limit; y++ {
 			feeder <- y
 		}
 		wgFeeder.Done()
@@ -321,7 +205,7 @@ func findDeadZones(signals []*signal, limit int64, testMode bool) [][]int64 {
 	}
 
 	wgWriter.Add(1)
-	go func(foundQ chan []int64) {
+	go func(foundQ chan []int) {
 		for foundZone := range foundQ {
 			found = append(found, foundZone)
 		}
@@ -340,6 +224,164 @@ func findDeadZones(signals []*signal, limit int64, testMode bool) [][]int64 {
 	wgWriter.Wait()
 
 	return found
+}
+
+func mapReducer(signals []*signal, limit int) [][]int {
+	wgFeeder := sync.WaitGroup{}
+	wgLiner := sync.WaitGroup{}
+
+	feederQ := make(chan int, 10)
+
+	wgFeeder.Add(1)
+	go func(feeder chan int) {
+		for y := 0; y <= limit; y++ {
+			feeder <- y
+		}
+		wgFeeder.Done()
+	}(feederQ)
+
+	for i := 0; i <= runtime.NumCPU()-2; i++ {
+		wgLiner.Add(1)
+		go func(y_axis chan int) {
+			for y := range y_axis {
+				if y == -1 {
+					continue
+				}
+				line := map[int]bool{}
+				for x := 0; x <= limit; x++ {
+					line[x] = true
+				}
+			}
+			wgLiner.Done()
+		}(feederQ)
+	}
+	wgFeeder.Wait()
+	close(feederQ)
+	wgLiner.Wait()
+	return [][]int{}
+}
+
+func sliceReducer(signals []*signal, limit int) [][]int {
+	wgFeeder := sync.WaitGroup{}
+	wgLiner := sync.WaitGroup{}
+
+	feederQ := make(chan int, 10)
+
+	wgFeeder.Add(1)
+	go func(feeder chan int) {
+		for y := 0; y <= limit; y++ {
+			feeder <- y
+		}
+		wgFeeder.Done()
+	}(feederQ)
+
+	for i := 0; i <= runtime.NumCPU()-2; i++ {
+		wgLiner.Add(1)
+		go func(y_axis chan int) {
+			for y := range y_axis {
+				if y%10000 == 0 {
+					fmt.Println("Y at", y)
+				}
+				line := make([]bool, limit+1)
+				for x := 0; x <= limit; x++ {
+					line[x] = true
+				}
+			}
+			wgLiner.Done()
+		}(feederQ)
+	}
+	wgFeeder.Wait()
+	close(feederQ)
+	wgLiner.Wait()
+	return [][]int{}
+}
+
+func sorted(i, j int) (int, int) {
+	if j >= i {
+		return i, j
+	}
+	return j, i
+}
+
+func sliceReducerReal(signals []*signal, limit int) ([][]int, bool) {
+	wgFeeder := sync.WaitGroup{}
+	wgLiner := sync.WaitGroup{}
+	wgWriter := sync.WaitGroup{}
+
+	feederQ := make(chan int, 10)
+	foundQ := make(chan []int, 1)
+
+	found := [][]int{}
+
+	wgFeeder.Add(1)
+	go func(feeder chan int) {
+		for y := 0; y <= limit; y++ {
+			feeder <- y
+		}
+		wgFeeder.Done()
+	}(feederQ)
+
+	for i := 0; i <= runtime.NumCPU()-2; i++ {
+		wgLiner.Add(1)
+		go func(y_axis chan int, found chan []int) {
+			for y := range y_axis {
+				if y%10000 == 0 {
+					fmt.Println("Y at", y)
+				}
+				line := make([]bool, limit+1)
+				for _, s := range signals {
+					// No co-ords in this line
+					if len(s.coverage[y]) == 0 {
+						continue
+					}
+					// Just a single cord in this line
+					if len(s.coverage[y]) == 1 {
+						line[s.coverage[y][0]] = true
+						continue
+					}
+					// Get start stop of each coverage on the line
+					min, max := sorted(s.coverage[y][0], s.coverage[y][1])
+					if min < 0 {
+						min = 0
+					}
+					if max > limit {
+						max = limit
+					}
+					for x := min; x <= max; x++ {
+						line[x] = true
+					}
+				}
+				for x, covered := range line {
+					if !covered {
+						fmt.Println("Ding!", x, y)
+						found <- []int{x, y}
+					}
+				}
+			}
+			wgLiner.Done()
+		}(feederQ, foundQ)
+	}
+
+	wgWriter.Add(1)
+	go func(foundQ chan []int) {
+		for payload := range foundQ {
+			found = append(found, payload)
+		}
+		wgWriter.Done()
+	}(foundQ)
+
+	wgFeeder.Wait()
+	close(feederQ)
+	wgLiner.Wait()
+	close(foundQ)
+	wgWriter.Wait()
+	return found, len(found) > 0
+}
+
+func timeThis(f func()) {
+	tStart := time.Now()
+	f()
+	fmt.Println(time.Since(tStart))
 }
 
 func main() {
@@ -371,7 +413,25 @@ func main() {
 		fmt.Printf("-------- %d --------\n", id)
 	}
 
-	//deadZones := findDeadZones(signals, 20, true)
-	deadZones := findDeadZones(signals, 4000000, false)
-	fmt.Println(deadZones)
+	// //deadZones := findDeadZones(signals, 20, true)
+	// deadZones := findDeadZones(signals, 4000000, false)
+	// fmt.Println(deadZones)
+	// timeThis(
+	// 	func() {
+	// 		mapReducer(signals, 1000000)
+	// 	},
+	// )
+	// timeThis(
+	// 	func() {
+	// 		sliceReducer(signals, 1000000)
+	// 	},
+	// )
+
+	// coOrds, found := sliceReducerReal(signals, 20)
+	coOrds, found := sliceReducerReal(signals, 4000000)
+	if found {
+		fmt.Println(coOrds)
+	} else {
+		fmt.Println("boo!")
+	}
 }

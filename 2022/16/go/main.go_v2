@@ -1,0 +1,281 @@
+package main
+
+import (
+	"encoding/base64"
+	"flag"
+	"fmt"
+	"log"
+	"os"
+	"regexp"
+	"sort"
+	"strconv"
+	"strings"
+	"sync"
+
+	"gonum.org/v1/gonum/graph/path"
+	"gonum.org/v1/gonum/graph/simple"
+)
+
+var (
+	flagFile    = flag.String("f", "./input.txt", "Data file to read.")
+	flagHelp    = flag.Bool("h", false, "Help menu.")
+	flagVerbose = flag.Bool("V", false, "Verbose debug printing.")
+)
+
+func writeOutput(fileName string, data interface{}) error {
+	fmt.Println(data)
+
+	outputFile, err := os.OpenFile(fileName, os.O_RDWR+os.O_CREATE, 0660)
+	if err != nil {
+		return err
+	}
+
+	b64Enc := base64.NewEncoder(base64.RawStdEncoding, outputFile)
+	_, err = b64Enc.Write([]byte(fmt.Sprint(data)))
+	if err != nil {
+		return err
+	}
+
+	return nil
+}
+
+func readInput(fileName string) (string, error) {
+	input, err := os.ReadFile(fileName)
+	if err != nil {
+		return "", fmt.Errorf("error reading data. Error: %s", err)
+	}
+	return string(input), nil
+}
+
+func mustInt(i string) int {
+	j, err := strconv.Atoi(i)
+	if err != nil {
+		panic(err)
+	}
+	return j
+}
+
+type Cave struct {
+	Id            int64
+	Label         string
+	ValveFlowRate int
+	Connections   []string
+}
+
+func (c *Cave) ID() int64 {
+	return c.Id
+}
+
+func buildCaveNetwork(caves map[string]*Cave) *simple.UndirectedGraph {
+	network := simple.NewUndirectedGraph()
+
+	for _, cave := range caves {
+		for _, nextCave := range cave.Connections {
+			if *flagVerbose {
+				fmt.Printf("Link %s [%d] to %s [%d]\n", cave.Label, cave.Id, caves[nextCave].Label, caves[nextCave].Id)
+			}
+			network.SetEdge(network.NewEdge(cave, caves[nextCave]))
+		}
+	}
+
+	return network
+}
+
+func cavesWithValves(caves map[string]*Cave) []int64 {
+	out := []int{}
+	for _, cave := range caves {
+		if cave.ValveFlowRate > 0 {
+			out = append(out, int(cave.ID()))
+		}
+	}
+	sort.Ints(out)
+	output := []int64{}
+	for _, o := range out {
+		output = append(output, int64(o))
+	}
+	return output
+}
+
+func decodeInput(input string) map[string]*Cave {
+	caves := map[string]*Cave{}
+	regexPattern := regexp.MustCompile(`Valve (?P<id>[A-Z]+).*=(?P<rate>[0-9]+);.*valve[s]? (?P<neighbors>.*)$`)
+	for id, line := range strings.Split(input, "\n") {
+		digestedLine := regexPattern.FindStringSubmatch(line)
+		caves[digestedLine[1]] = &Cave{
+			Id:            int64(id),
+			Label:         digestedLine[1],
+			ValveFlowRate: mustInt(digestedLine[2]),
+			Connections:   strings.Split(digestedLine[len(digestedLine)-1], ", "),
+		}
+	}
+	return caves
+}
+
+type CaveNetwork struct {
+	network                *simple.UndirectedGraph
+	roomsWithWorkingValves []int64
+	routes                 path.AllShortest
+}
+
+func newCaveNetwork(
+	network *simple.UndirectedGraph,
+	roomsWithValves []int64,
+) *CaveNetwork {
+	return &CaveNetwork{
+		network:                network,
+		routes:                 path.DijkstraAllPaths(network),
+		roomsWithWorkingValves: roomsWithValves,
+	}
+}
+
+func (cn *CaveNetwork) travel(from int64, to int64) (string, int) {
+	path, _, _ := cn.routes.Between(from, to)
+	pathString := []string{}
+	for _, n := range path {
+		pathString = append(pathString, cn.nodeLabel(n.ID()))
+	}
+	return strings.Join(pathString, " -> "), len(path) - 1
+}
+
+func (cn *CaveNetwork) nodeFlowRate(id int64) int {
+	return cn.network.Node(id).(*Cave).ValveFlowRate
+}
+
+func (cn *CaveNetwork) nodeLabel(id int64) string {
+	return cn.network.Node(id).(*Cave).Label
+}
+
+func openValves(cn *CaveNetwork, caveDirectory map[string]int64) int {
+	timeLeft := 30
+	totalPressureReleased := 0
+	valvesClosed := make([]int64, len(cn.roomsWithWorkingValves))
+	copy(valvesClosed, cn.roomsWithWorkingValves)
+	currentValve := caveDirectory["AA"]
+
+	nextHighestValueValve := func() (int, int, int64, bool) {
+		released := 0
+		timeRequired := 0
+		valveID := -1
+		canContinue := false
+
+		values := make(chan []int, 1)
+		wgWorkers := &sync.WaitGroup{}
+		wgReader := &sync.WaitGroup{}
+
+		for _, nextValve := range valvesClosed {
+			workersValve := nextValve
+			wgWorkers.Add(1)
+			go func() {
+				myTimeLeft := timeLeft
+				path, steps := cn.travel(currentValve, workersValve)
+				if *flagVerbose {
+					fmt.Printf("Current Valve: %s, go to %s, moves: %d, path:%s\n",
+						cn.nodeLabel(currentValve),
+						cn.nodeLabel(workersValve),
+						steps,
+						path,
+					)
+				}
+				// rooms to pass plus 1 min to open valve
+				timeTaken := steps + 1
+				myTimeLeft = myTimeLeft - timeTaken
+				potentialValue := cn.nodeFlowRate(workersValve) * myTimeLeft
+				workerPayload := []int{int(workersValve), potentialValue, timeTaken}
+				values <- workerPayload
+				wgWorkers.Done()
+			}()
+		}
+
+		wgReader.Add(1)
+		go func() {
+			currentHighest := 0
+			currentHighestValveID := -1
+			currentTimeRequired := 0
+			// payload[0] = valveID
+			// payload[1] = potentialValue
+			// payload[2] = timeRequired
+			for payload := range values {
+				if payload[1] > currentHighest {
+					// If we don't have the time to get to the highest, move on
+					// to something that we might have time for.
+					if payload[2] > timeLeft {
+						continue
+					}
+
+					currentHighestValveID = payload[0]
+					currentHighest = payload[1]
+					currentTimeRequired = payload[2]
+				}
+			}
+
+			released = currentHighest
+			timeRequired = currentTimeRequired
+			valveID = currentHighestValveID
+			if currentHighestValveID != -1 {
+				canContinue = true
+			}
+			wgReader.Done()
+		}()
+
+		wgWorkers.Wait()
+		close(values)
+		wgReader.Wait()
+		if valveID != -1 {
+			fmt.Printf("Come from: %s, pressure: %d, timeRequired: %d, fromValve: (%s)%d\n", cn.nodeLabel(currentValve), released, timeRequired, cn.nodeLabel(int64(valveID)), valveID)
+		}
+		return released, timeRequired, int64(valveID), canContinue
+	}
+
+	removeValve := func(idToRemove int64) {
+		newValves := []int64{}
+		for _, valve := range valvesClosed {
+			if valve != idToRemove {
+				newValves = append(newValves, valve)
+			}
+		}
+		valvesClosed = newValves
+	}
+
+	for timeLeft > 0 {
+		pressureReleased, timeRequired, fromValve, canContinue := nextHighestValueValve()
+		if canContinue {
+			totalPressureReleased = totalPressureReleased + pressureReleased
+			timeLeft = timeLeft - timeRequired
+			removeValve(fromValve)
+			currentValve = fromValve
+			fmt.Println("Time left:", timeLeft)
+		} else {
+			break
+		}
+	}
+
+	return totalPressureReleased
+}
+
+func main() {
+	flag.Parse()
+
+	if *flagHelp {
+		flag.PrintDefaults()
+		os.Exit(1)
+	}
+	input, err := readInput(*flagFile)
+	if err != nil {
+		log.Fatal("Failed to read file.")
+	}
+	caves := decodeInput(input)
+	caveDirectory := map[string]int64{}
+	for label, cave := range caves {
+		caveDirectory[label] = cave.Id
+	}
+
+	cn := newCaveNetwork(
+		buildCaveNetwork(caves),
+		cavesWithValves(caves),
+	)
+
+	highestPressure := openValves(cn, caveDirectory)
+
+	writeOutput("./output1.txt", highestPressure)
+
+}

@@ -1,0 +1,8 @@
+=== RUN   TestPressureWalker
+    main_1_test.go:270: AA= 0
+    main_1_test.go:271: PossibleCount:  720
+    main_1_test.go:272: HighestPath: 0,3,1,9,7,4,2  < AA < DD < BB < JJ < HH < EE < CC
+    main_1_test.go:273: HighestPressure: 1651
+--- PASS: TestPressureWalker (0.00s)
+PASS
+ok  	github.com/morfien101/adventofcode/2022/16	0.003s
