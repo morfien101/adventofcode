@@ -1,6 +1,8 @@
 package main
 
 import (
+	"strings"
+	"sync"
 	"testing"
 )
 
@@ -58,11 +60,11 @@ func drawRock(t *testing.T, r *rock) {
 
 func TestRocks(t *testing.T) {
 	currentHeight := 0
-	rocksChan := generateRocks(&currentHeight)
+	rocksChan := generateRocks()
 
 	for i := 0; i < 5; i++ {
-		currentRock := <-rocksChan
-		drawRock(t, currentRock)
+		nextRock := <-rocksChan
+		drawRock(t, nextRock(currentHeight))
 		currentHeight++
 	}
 }
@@ -114,6 +116,31 @@ func matchSlice[T bool | int | string](x, y []T) bool {
 		}
 	}
 	return match
+}
+
+func TestDrawStack(t *testing.T) {
+	// There appears to be a bug when drawing the stack.
+	// Each time you draw it adds 1 extra line.
+	// Fix this.
+}
+
+func TestTrim(t *testing.T) {
+	theStack := newStack()
+
+	for i := 0; i < 10000; i++ {
+		theStack.addBlankLine(i, true)
+	}
+
+	//t.Log(theStack)
+
+	theStack.trim(5000)
+	nKeys := 0
+	for range theStack.pile {
+		nKeys++
+	}
+
+	t.Logf("Number of keys: %d, current height: %d", nKeys, theStack.hight)
+
 }
 
 func TestMatchSlice(t *testing.T) {
@@ -244,4 +271,120 @@ func TestFirstTwo(t *testing.T) {
 	theStack.addRock(rock2)
 
 	t.Log(theStack)
+}
+
+func TestDraw(t *testing.T) {
+	theStack := newStack()
+	rock1 := newHLineRock(4)
+	theStack.addRock(rock1)
+	t.Log(theStack.draw(true))
+	t.Log(theStack.pile)
+	t.Log(theStack.hight)
+}
+
+func TestFindPattern(t *testing.T) {
+	nRocks := 1000000
+
+	input, err := readInput("./input.txt")
+	if err != nil {
+		t.Log(err)
+		t.FailNow()
+	}
+	jetsRaw := decodeInput(input)
+
+	jets := jetCycles(jetsRaw)
+
+	currentHight := 0
+	theStack := newStack()
+	rocks := generateRocks()
+
+	for i := 1; i <= nRocks; i++ {
+		nextRock := <-rocks
+		currentRock := nextRock(currentHight)
+		if i%100000 == 0 {
+			t.Log("Dropping rock:", i)
+		}
+		moveLRRock := func(direction string) {
+			if direction == left {
+				currentRock.moveLeft()
+				if theStack.collision(currentRock) {
+					currentRock.moveRight()
+				}
+			} else if direction == right {
+				currentRock.moveRight()
+				if theStack.collision(currentRock) {
+					currentRock.moveLeft()
+				}
+			}
+		}
+
+		for {
+			moveLRRock(<-jets)
+
+			currentRock.moveDown()
+			if theStack.collision(currentRock) {
+				currentRock.moveUp()
+				theStack.addRock(currentRock)
+				currentHight = theStack.highestPoint()
+				break
+			}
+		}
+	}
+
+	t.Log("Done, going to drawing")
+	theStackImage := theStack.draw(false)
+	t.Log("Done, drawing")
+
+	tester := func(limit int, found chan bool) {
+		window1Limit := limit
+		window2Limit := limit * 2
+
+		window1 := []string{}
+		window2 := []string{}
+
+		for j := 1; j <= window1Limit; j++ {
+			window1 = append(window1, theStackImage[j])
+		}
+		for k := window1Limit + 1; k <= window2Limit; k++ {
+			window2 = append(window1, theStackImage[k])
+		}
+
+		if strings.Join(window1, "") == strings.Join(window2, "") {
+			t.Logf("Found pattern at window limits 1: %d, 2: %d", window1Limit, window2Limit)
+			found <- true
+		}
+	}
+
+	workerWG := &sync.WaitGroup{}
+	limitsChan := make(chan int)
+	foundChan := make(chan bool, 8)
+
+	for worker := 0; worker < 8; worker++ {
+		workerWG.Add(1)
+		go func() {
+			for limit := range limitsChan {
+				tester(limit, foundChan)
+			}
+			workerWG.Done()
+		}()
+	}
+
+	for i := 100000; i < (len(theStackImage)-2)/2; i++ {
+		if i%1000 == 0 {
+			t.Log("Testing limit", i)
+		}
+		exit := false
+		select {
+		case limitsChan <- i:
+		case <-foundChan:
+			close(limitsChan)
+			workerWG.Wait()
+			close(foundChan)
+			exit = true
+		}
+		if exit {
+			break
+		}
+		limitsChan <- i
+	}
 }

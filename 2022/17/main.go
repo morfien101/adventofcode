@@ -1,11 +1,12 @@
 package main
 
 import (
+	"crypto/sha1"
 	"encoding/base64"
 	"flag"
 	"fmt"
 	"os"
-	"sort"
+	"strings"
 )
 
 // Falling hole is 7 units wide
@@ -67,16 +68,21 @@ func decodeInput(input string) []string {
 	return out
 }
 
-func jetCycles(cycle []string) chan string {
-	out := make(chan string)
+type jetStream struct {
+	direction string
+	index     int
+}
+
+func jetCycles(cycle []string) chan jetStream {
+	out := make(chan jetStream)
 	go func() {
 		defer func() {
 			recover()
 		}()
 
 		for {
-			for _, d := range cycle {
-				out <- d
+			for idx, d := range cycle {
+				out <- jetStream{direction: d, index: idx}
 			}
 		}
 	}()
@@ -203,8 +209,14 @@ func newSquareRock(yLower int) *rock {
 	return theRock
 }
 
-func generateRocks() chan func(int) *rock {
-	c := make(chan func(int) *rock)
+type rockGen struct {
+	f           func(int) *rock
+	orderNumber int
+}
+
+func generateRocks() chan *rockGen {
+	c := make(chan *rockGen)
+
 	rocksOrder := []func(int) *rock{
 		newHLineRock,
 		newPlusRock,
@@ -213,75 +225,104 @@ func generateRocks() chan func(int) *rock {
 		newSquareRock,
 	}
 
-	go func(c chan func(int) *rock) {
+	go func() {
 		for {
-			for _, rock := range rocksOrder {
-				c <- rock
+			for idx, rock := range rocksOrder {
+				c <- &rockGen{f: rock, orderNumber: idx}
 			}
 		}
-	}(c)
+	}()
 
 	return c
 }
 
 type stack struct {
 	pile   map[int][]string
-	keys   []int
+	hight  int
 	empty  string
 	filled string
 }
 
 func newStack() *stack {
-	return &stack{pile: map[int][]string{}, keys: []int{}, empty: ".", filled: "x"}
-}
-
-func (s *stack) updateKeys() {
-	keys := []int{}
-	for k := range s.pile {
-		keys = append(keys, k)
-	}
-	sort.Ints(keys)
-	s.keys = keys
+	return &stack{pile: map[int][]string{}, hight: 0, empty: ".", filled: "x"}
 }
 
 func (s *stack) highestPoint() int {
-	return s.keys[len(s.keys)-1]
+	return s.hight
 }
 
-func (s *stack) String() string {
-	if len(s.keys) == 0 {
-		return fmt.Sprintln("001: [. . . . . . .]")
-	}
-	maxLines := s.keys[len(s.keys)-1]
-	output := "\n"
-
-	for i := maxLines; i >= 1; i-- {
-		if len(s.pile[i]) == 0 {
-			s.addBlankLine(i)
+func (s *stack) draw(withNumbers bool) []string {
+	if s.hight == 0 {
+		if withNumbers {
+			return []string{"001: [. . . . . . .]"}
+		} else {
+			return []string{"[. . . . . . .]"}
 		}
-		output += fmt.Sprintf("%03d: %v\n", i, s.pile[i])
+	}
+
+	highestLine := 0
+	for k := range s.pile {
+		if k > highestLine {
+			highestLine = k
+		}
+	}
+
+	output := []string{}
+	for i := highestLine; i >= 1; i-- {
+		if len(s.pile[i]) == 0 {
+			s.addBlankLine(i, false)
+		}
+		if withNumbers {
+			output = append(output, fmt.Sprintf("%03d: %v\n", i, s.pile[i]))
+		} else {
+			output = append(output, fmt.Sprintln(s.pile[i]))
+		}
 	}
 
 	return output
 }
 
-func (s *stack) addBlankLine(y int) {
+func (s *stack) String() string {
+	lines := s.draw(true)
+	return strings.Join(lines, "\n")
+}
+
+func (s *stack) addBlankLine(y int, increaseHight bool) {
 	line := make([]string, 7)
 	for i := 0; i < 7; i++ {
 		line[i] = s.empty
 	}
 	s.pile[y] = line
-	s.updateKeys()
+	if increaseHight {
+		s.hight++
+	}
 }
 
 func (s *stack) addRock(r *rock) {
 	for _, p := range r.pos {
 		if len(s.pile[p.y]) == 0 {
-			s.addBlankLine(p.y)
+			s.addBlankLine(p.y, true)
 		}
 		s.pile[p.y][p.x] = s.filled
 	}
-	s.updateKeys()
+}
+
+func (s *stack) trim(tail int) {
+	dropValue := s.hight - tail
+	for k := range s.pile {
+		if k < dropValue {
+			delete(s.pile, k)
+		}
+	}
+}
+
+// lastX return the last x number of lines as strings.
+func (s *stack) lastX(x int) []string {
+	top := []string{}
+	for i := x; i < 0; i-- {
+		top = append(top, strings.Join(s.pile[i], ""))
+	}
+	return top
 }
 
 // collision tests to see if there is a left or right movement
@@ -335,7 +376,7 @@ func part1(jetsRaw []string, nRocks int) {
 	for i := 1; i <= nRocks; i++ {
 		//fmt.Println("Dropping rock:", i)
 		nextRock := <-rocks
-		currentRock := nextRock(currentHight)
+		currentRock := nextRock.f(currentHight)
 
 		moveLRRock := func(direction string) {
 			if direction == left {
@@ -356,7 +397,8 @@ func part1(jetsRaw []string, nRocks int) {
 		}
 
 		for {
-			moveLRRock(<-jets)
+			jet := <-jets
+			moveLRRock(jet.direction)
 
 			currentRock.moveDown()
 			//fmt.Println("Move down")
@@ -376,58 +418,118 @@ func part1(jetsRaw []string, nRocks int) {
 	writeOutput("./output1.txt", theStack.highestPoint())
 }
 
-func part2(jetsRaw []string, nRocks int) {
-	jets := jetCycles(jetsRaw)
+type hashTable struct {
+	table   map[string]bool
+	history []string
+}
 
+func newHashTable() *hashTable {
+	return &hashTable{
+		table:   map[string]bool{},
+		history: []string{},
+	}
+}
+
+// add will attempt to add the hash to the table.
+// If the hash is already in the table it will return
+// false and the base64 string to indicate that the value is already in the table.
+// The base64 string can be used to determine when last the key was seen.
+func (ht *hashTable) add(rockIdx, jetIdx int, top20 []string) (string, bool) {
+
+	hasher := sha1.New()
+	hasher.Write([]byte(
+		fmt.Sprintf("%d%d%s", rockIdx, jetIdx, strings.Join(top20, "")),
+	))
+
+	key := base64.URLEncoding.EncodeToString(hasher.Sum(nil))
+
+	if ht.table[key] {
+		return key, false
+	}
+
+	ht.table[key] = true
+	ht.history = append(ht.history, key)
+
+	return "", true
+}
+
+// historyCount will give a number that shows the number of values from the
+// point the value was first seen to the end of history.
+func (ht *hashTable) historyCount(from string) int {
+	for idx, value := range ht.history {
+		if from == value {
+			return (len(ht.history) - 1) - idx
+		}
+	}
+	return -1
+}
+
+func part2(jetsRaw []string, nRocks int) {
 	currentHight := 0
 	theStack := newStack()
+	ht := newHashTable()
 	rocks := generateRocks()
+	jets := jetCycles(jetsRaw)
 
-	for i := 1; i <= nRocks; i++ {
-		if i%100000 == 0 {
-			fmt.Println("Dropping rock", i)
-		}
-		//fmt.Println("Dropping rock:", i)
+	for rockCount := 1; rockCount <= nRocks; rockCount++ {
 		nextRock := <-rocks
-		currentRock := nextRock(currentHight)
+		currentRock := nextRock.f(currentHight)
+		currentRockIndex := nextRock.orderNumber
 
 		moveLRRock := func(direction string) {
 			if direction == left {
 				currentRock.moveLeft()
-				//fmt.Println("Move left")
 				if theStack.collision(currentRock) {
-					//fmt.Println("Collision: Move right")
 					currentRock.moveRight()
 				}
 			} else if direction == right {
 				currentRock.moveRight()
-				//fmt.Println("Move right")
 				if theStack.collision(currentRock) {
-					//fmt.Println("Collision: Move left")
 					currentRock.moveLeft()
 				}
 			}
 		}
 
 		for {
-			moveLRRock(<-jets)
+			jet := <-jets
+			moveLRRock(jet.direction)
 
 			currentRock.moveDown()
-			//fmt.Println("Move down")
 			if theStack.collision(currentRock) {
-				//fmt.Println("Moved down into something")
 				currentRock.moveUp()
-				//fmt.Println("Move up")
 				theStack.addRock(currentRock)
-				//fmt.Println("Set hight to:", theStack.highestPoint())
 				currentHight = theStack.highestPoint()
+				// Look for pattern here.
+				// hashtable(
+				//  rock number
+				//  jetnumber
+				// 	theStack.lastX(20)
+				// )
+				if hash, ok := ht.add(currentRockIndex, jet.index, theStack.lastX(20)); !ok {
+					repeatingCount := ht.historyCount(hash)
+					fmt.Println("Found pattern", hash, repeatingCount)
+					fmt.Println("Stacking until close to target...")
+					for {
+						if !(rockCount+repeatingCount > nRocks) {
+							rockCount += repeatingCount
+						} else {
+							break
+						}
+					}
+					fmt.Println("Stacked to:", rockCount)
+					// I now need to determine the hight of the stack at this point.
+					// There are a few ideas:
+					// Run until I get a second hit.
+					//   Check to see how much the hight has increased since then.
+					//   Write the last x number of rocks into the stack so the next
+					//   set of rocks have something to fall onto.
+				}
 				break
 			}
 		}
 	}
-	//fmt.Println(theStack)
 
-	writeOutput("./output1.txt", theStack.highestPoint())
+	writeOutput("./output2.txt", theStack.highestPoint())
 }
 
 func main() {
