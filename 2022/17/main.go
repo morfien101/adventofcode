@@ -115,17 +115,14 @@ func (r *rock) move(xDirection int, yDirection int) {
 	// Testing if they hit other rocks or the floor needs
 	// to be done elsewhere.
 	for _, p := range r.pos {
-		currentXCheck := p.x + xDirection
-		if currentXCheck < 0 || currentXCheck > 6 {
+		nextX := p.x + xDirection
+		if nextX < 0 || nextX > 6 {
 			return
 		}
 	}
 
 	for _, p := range r.pos {
-		newX := p.x + xDirection
-		if newX >= 0 && newX < 7 {
-			p.x = newX
-		}
+		p.x = p.x + xDirection
 		p.y = p.y + yDirection
 	}
 }
@@ -210,7 +207,7 @@ func newSquareRock(yLower int) *rock {
 }
 
 type rockGen struct {
-	f           func(int) *rock
+	generate    func(int) *rock
 	orderNumber int
 }
 
@@ -228,7 +225,7 @@ func generateRocks() chan *rockGen {
 	go func() {
 		for {
 			for idx, rock := range rocksOrder {
-				c <- &rockGen{f: rock, orderNumber: idx}
+				c <- &rockGen{generate: rock, orderNumber: idx}
 			}
 		}
 	}()
@@ -251,12 +248,28 @@ func (s *stack) highestPoint() int {
 	return s.hight
 }
 
+func (s *stack) setHighestPoint(newValue int) {
+	s.hight = newValue
+}
+
+func (s *stack) duplicateLines(from, to []int) error {
+	if len(from) != len(to) {
+		return fmt.Errorf("from and to are not the same size")
+	}
+
+	for fIndex, f := range from {
+		s.pile[to[fIndex]] = s.pile[f]
+	}
+
+	return nil
+}
+
 func (s *stack) draw(withNumbers bool) []string {
 	if s.hight == 0 {
 		if withNumbers {
-			return []string{"001: [. . . . . . .]"}
+			return []string{"001: [. . . . . . .]\n"}
 		} else {
-			return []string{"[. . . . . . .]"}
+			return []string{"[. . . . . . .]\n"}
 		}
 	}
 
@@ -284,7 +297,7 @@ func (s *stack) draw(withNumbers bool) []string {
 
 func (s *stack) String() string {
 	lines := s.draw(true)
-	return strings.Join(lines, "\n")
+	return strings.Join(lines, "")
 }
 
 func (s *stack) addBlankLine(y int, increaseHight bool) {
@@ -327,7 +340,8 @@ func (s *stack) lastX(x int) []string {
 
 // collision tests to see if there is a left or right movement
 // collision. The rock must already be in the position that you
-// want to test with. A bool is returned to state if there is a
+// want to test with. It is also used to see if the rock has collided
+// with another rock. A bool is returned to state if there is a
 // collision.
 func (s *stack) collision(r *rock) bool {
 	for _, p := range r.pos {
@@ -339,6 +353,7 @@ func (s *stack) collision(r *rock) bool {
 		if len(s.pile[p.y]) == 0 {
 			continue
 		}
+		// There is a line drawn, does it have a rock part in it.
 		if s.pile[p.y][p.x] == s.filled {
 			return true
 		}
@@ -346,37 +361,17 @@ func (s *stack) collision(r *rock) bool {
 	return false
 }
 
-// settle tests to see if the rock would settle where it is.
-// The rock should be tested for settling before moving down.
-func (s *stack) settle(r *rock) bool {
-	for _, p := range r.pos {
-		// We are at the floor
-		if p.y-1 == 0 {
-			return true
-		}
-		// If there is no line under it then it can't settle.
-		if len(s.pile[p.y-1]) == 0 {
-			return false
-		}
-		if s.pile[p.y-1][p.x] == s.filled {
-			return true
-		}
-	}
-	// We should never be able to get here.
-	return false
-}
-
+// part1 should give 3055
 func part1(jetsRaw []string, nRocks int) {
 	jets := jetCycles(jetsRaw)
 
-	currentHight := 0
 	theStack := newStack()
 	rocks := generateRocks()
 
 	for i := 1; i <= nRocks; i++ {
 		//fmt.Println("Dropping rock:", i)
 		nextRock := <-rocks
-		currentRock := nextRock.f(currentHight)
+		currentRock := nextRock.generate(theStack.highestPoint())
 
 		moveLRRock := func(direction string) {
 			if direction == left {
@@ -408,7 +403,6 @@ func part1(jetsRaw []string, nRocks int) {
 				//fmt.Println("Move up")
 				theStack.addRock(currentRock)
 				//fmt.Println("Set hight to:", theStack.highestPoint())
-				currentHight = theStack.highestPoint()
 				break
 			}
 		}
@@ -453,27 +447,26 @@ func (ht *hashTable) add(rockIdx, jetIdx int, top20 []string) (string, bool) {
 	return "", true
 }
 
-// historyCount will give a number that shows the number of values from the
-// point the value was first seen to the end of history.
-func (ht *hashTable) historyCount(from string) int {
-	for idx, value := range ht.history {
-		if from == value {
-			return (len(ht.history) - 1) - idx
-		}
-	}
-	return -1
-}
-
+// 1507692307714 - wrong
+// 1507692307690
 func part2(jetsRaw []string, nRocks int) {
-	currentHight := 0
 	theStack := newStack()
 	ht := newHashTable()
 	rocks := generateRocks()
 	jets := jetCycles(jetsRaw)
 
+	// Vars for pattern
+	recording := false
+	hashMatch := ""
+	hightAtRecordingStart := 0
+	repeatHight := 0
+	repeatedRocks := 0
+	topItOff := false
+
 	for rockCount := 1; rockCount <= nRocks; rockCount++ {
+
 		nextRock := <-rocks
-		currentRock := nextRock.f(currentHight)
+		currentRock := nextRock.generate(theStack.highestPoint())
 		currentRockIndex := nextRock.orderNumber
 
 		moveLRRock := func(direction string) {
@@ -498,32 +491,45 @@ func part2(jetsRaw []string, nRocks int) {
 			if theStack.collision(currentRock) {
 				currentRock.moveUp()
 				theStack.addRock(currentRock)
-				currentHight = theStack.highestPoint()
-				// Look for pattern here.
-				// hashtable(
-				//  rock number
-				//  jetnumber
-				// 	theStack.lastX(20)
-				// )
-				if hash, ok := ht.add(currentRockIndex, jet.index, theStack.lastX(20)); !ok {
-					repeatingCount := ht.historyCount(hash)
-					fmt.Println("Found pattern", hash, repeatingCount)
-					fmt.Println("Stacking until close to target...")
-					for {
-						if !(rockCount+repeatingCount > nRocks) {
-							rockCount += repeatingCount
-						} else {
-							break
+
+				if !topItOff {
+					if recording {
+						repeatedRocks++
+						if hash, _ := ht.add(currentRockIndex, jet.index, theStack.lastX(20)); hash == hashMatch {
+							// fmt.Println("found hash again...")
+							repeatHight = theStack.highestPoint() - hightAtRecordingStart
+							for rockCount+repeatedRocks < nRocks {
+								rockCount = rockCount + repeatedRocks
+								theStack.setHighestPoint(theStack.highestPoint() + repeatHight)
+							}
+
+							from := []int{}
+							for i := hightAtRecordingStart; i <= hightAtRecordingStart+repeatHight; i++ {
+								from = append(from, i)
+							}
+							to := []int{}
+							for i := theStack.highestPoint() - repeatHight; i <= theStack.highestPoint(); i++ {
+								to = append(to, i)
+							}
+							// fmt.Println("Duplicate")
+							// fmt.Printf("from: %v\n", from)
+							// fmt.Printf("to: %v\n", to)
+							err := theStack.duplicateLines(from, to)
+							if err != nil {
+								fmt.Println(err)
+								os.Exit(1)
+							}
+							topItOff = true
+						}
+					} else {
+						if hash, ok := ht.add(currentRockIndex, jet.index, theStack.lastX(20)); !ok {
+							recording = true
+							hashMatch = hash
+							hightAtRecordingStart = theStack.highestPoint()
 						}
 					}
-					fmt.Println("Stacked to:", rockCount)
-					// I now need to determine the hight of the stack at this point.
-					// There are a few ideas:
-					// Run until I get a second hit.
-					//   Check to see how much the hight has increased since then.
-					//   Write the last x number of rocks into the stack so the next
-					//   set of rocks have something to fall onto.
 				}
+				// fmt.Println("Dropped rocks:", rockCount)
 				break
 			}
 		}
@@ -542,7 +548,6 @@ func main() {
 	}
 	jetsRaw := decodeInput(input)
 
-	// Drop 2022 rocks
 	part1(jetsRaw, 2022)
 	part2(jetsRaw, 1000000000000)
 }

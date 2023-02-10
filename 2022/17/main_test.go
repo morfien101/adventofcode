@@ -1,8 +1,7 @@
 package main
 
 import (
-	"strings"
-	"sync"
+	"fmt"
 	"testing"
 )
 
@@ -21,7 +20,8 @@ func TestJetCycles(t *testing.T) {
 
 	cyclesCollected := []string{}
 	for i := 0; i < 1000; i++ {
-		cyclesCollected = append(cyclesCollected, <-c)
+		jet := <-c
+		cyclesCollected = append(cyclesCollected, jet.direction)
 	}
 	close(c)
 
@@ -64,7 +64,7 @@ func TestRocks(t *testing.T) {
 
 	for i := 0; i < 5; i++ {
 		nextRock := <-rocksChan
-		drawRock(t, nextRock(currentHeight))
+		drawRock(t, nextRock.generate(currentHeight))
 		currentHeight++
 	}
 }
@@ -148,48 +148,6 @@ func TestMatchSlice(t *testing.T) {
 		t.Fail()
 	}
 	if matchSlice([]bool{true, false}, []bool{true, true}) {
-		t.Fail()
-	}
-}
-
-func TestSettle(t *testing.T) {
-	theStack := newStack()
-	rock1 := newPlusRock(-3)
-
-	rock2 := newSquareRock(-1)
-	rock2.moveRight()
-	rock2.moveRight()
-	// rock2.moveDown()
-	// rock2.moveDown()
-
-	rock3 := newVLineRock(0)
-
-	rock4 := newVLineRock(-3)
-	rock4.moveLeft()
-	rock4.moveLeft()
-
-	theStack.addRock(rock1)
-
-	rockSettlements := []bool{
-		theStack.settle(rock1),
-		theStack.settle(rock2),
-		theStack.settle(rock3),
-		theStack.settle(rock4),
-	}
-	expectedRockSettlement := []bool{true, true, false, true}
-
-	fail := false
-	if !matchSlice(expectedRockSettlement, rockSettlements) {
-		t.Logf("Rocks did not settle correctly. Expected: %v, Got: %v", expectedRockSettlement, rockSettlements)
-		fail = true
-	}
-
-	theStack.addRock(rock2)
-	theStack.addRock(rock3)
-	theStack.addRock(rock4)
-	t.Log(theStack)
-
-	if fail {
 		t.Fail()
 	}
 }
@@ -282,8 +240,24 @@ func TestDraw(t *testing.T) {
 	t.Log(theStack.hight)
 }
 
-func TestFindPattern(t *testing.T) {
-	nRocks := 1000000
+func TestSquare(t *testing.T) {
+	theStack := newStack()
+	for i := 1; i <= 100; i++ {
+		theStack.addBlankLine(i, true)
+	}
+	sRock := newSquareRock(theStack.highestPoint())
+
+	theStack.pile[2][0] = theStack.filled
+	theStack.pile[3][0] = theStack.filled
+	theStack.pile[4][0] = theStack.filled
+	theStack.pile[5][0] = theStack.filled
+
+	theStack.pile[2][3] = theStack.filled
+	theStack.pile[3][3] = theStack.filled
+	theStack.pile[4][3] = theStack.filled
+	theStack.pile[5][3] = theStack.filled
+
+	theStack.pile[41][4] = theStack.filled
 
 	input, err := readInput("./input.txt")
 	if err != nil {
@@ -294,97 +268,33 @@ func TestFindPattern(t *testing.T) {
 
 	jets := jetCycles(jetsRaw)
 
-	currentHight := 0
-	theStack := newStack()
-	rocks := generateRocks()
-
-	for i := 1; i <= nRocks; i++ {
-		nextRock := <-rocks
-		currentRock := nextRock(currentHight)
-		if i%100000 == 0 {
-			t.Log("Dropping rock:", i)
-		}
-		moveLRRock := func(direction string) {
-			if direction == left {
-				currentRock.moveLeft()
-				if theStack.collision(currentRock) {
-					currentRock.moveRight()
-				}
-			} else if direction == right {
-				currentRock.moveRight()
-				if theStack.collision(currentRock) {
-					currentRock.moveLeft()
-				}
-			}
-		}
-
-		for {
-			moveLRRock(<-jets)
-
-			currentRock.moveDown()
+	moveLRRock := func(currentRock *rock, direction string) {
+		if direction == left {
+			currentRock.moveLeft()
 			if theStack.collision(currentRock) {
-				currentRock.moveUp()
-				theStack.addRock(currentRock)
-				currentHight = theStack.highestPoint()
-				break
+				currentRock.moveRight()
+			}
+		} else if direction == right {
+			currentRock.moveRight()
+			if theStack.collision(currentRock) {
+				currentRock.moveLeft()
 			}
 		}
 	}
 
-	t.Log("Done, going to drawing")
-	theStackImage := theStack.draw(false)
-	t.Log("Done, drawing")
+	for {
+		jet := <-jets
+		moveLRRock(sRock, jet.direction)
 
-	tester := func(limit int, found chan bool) {
-		window1Limit := limit
-		window2Limit := limit * 2
-
-		window1 := []string{}
-		window2 := []string{}
-
-		for j := 1; j <= window1Limit; j++ {
-			window1 = append(window1, theStackImage[j])
-		}
-		for k := window1Limit + 1; k <= window2Limit; k++ {
-			window2 = append(window1, theStackImage[k])
-		}
-
-		if strings.Join(window1, "") == strings.Join(window2, "") {
-			t.Logf("Found pattern at window limits 1: %d, 2: %d", window1Limit, window2Limit)
-			found <- true
-		}
-	}
-
-	workerWG := &sync.WaitGroup{}
-	limitsChan := make(chan int)
-	foundChan := make(chan bool, 8)
-
-	for worker := 0; worker < 8; worker++ {
-		workerWG.Add(1)
-		go func() {
-			for limit := range limitsChan {
-				tester(limit, foundChan)
-			}
-			workerWG.Done()
-		}()
-	}
-
-	for i := 100000; i < (len(theStackImage)-2)/2; i++ {
-		if i%1000 == 0 {
-			t.Log("Testing limit", i)
-		}
-		exit := false
-		select {
-		case limitsChan <- i:
-		case <-foundChan:
-			close(limitsChan)
-			workerWG.Wait()
-			close(foundChan)
-			exit = true
-		}
-		if exit {
+		sRock.moveDown()
+		if theStack.collision(sRock) {
+			sRock.moveUp()
+			theStack.addRock(sRock)
 			break
 		}
-		limitsChan <- i
+	}
+
+	for _, line := range theStack.draw(true) {
+		fmt.Print(line)
 	}
 }
