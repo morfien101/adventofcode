@@ -1,4 +1,4 @@
-from typing import List, Mapping, Union
+from typing import List, Mapping, Dict
 import base64
 from collections import defaultdict
 
@@ -16,8 +16,8 @@ def write_output(file: str, value: str):
 
 output_file1 = "./output1.txt"
 output_file2 = "./output2.txt"
-input_file = "./test_input.txt"
-# input_file = "./input.txt"
+# input_file = "./test_input.txt"
+input_file = "./input.txt"
 
 verbose = False
 
@@ -60,17 +60,17 @@ def occupied(
     return grid[x][y][z]
 
 
-def exposedEdges(
+def exposed_edges(
     grid: Mapping[int, Mapping[int, Mapping[int, bool]]], xyz: List[int]
 ) -> int:
-    exposedEdges = 0
+    edges = 0
 
     # grid contains the occupied space
     for x, y, z in neighbors(xyz):
         if not occupied(grid, x, y, z):
-            exposedEdges += 1
+            edges += 1
 
-    return exposedEdges
+    return edges
 
 
 def part1(
@@ -78,54 +78,85 @@ def part1(
 ):
     count = 0
     for xyz in coords:
-        count += exposedEdges(grid, xyz)
+        count += exposed_edges(grid, xyz)
 
     write_output(output_file1, f"{count}")
+
+
+def axis_min_max(
+    grid: Mapping[int, Mapping[int, Mapping[int, bool]]]
+) -> Dict[str, List[int]]:
+    max_x = 1
+    min_x = 1
+    max_y = 1
+    min_y = 1
+    max_z = 1
+    min_z = 1
+
+    for x in grid.keys():
+        if x < min_x:
+            min_x = x
+        elif x > max_x:
+            max_x = x
+
+        for y in grid[x].keys():
+            if y < min_y:
+                min_y = y
+            elif y > max_y:
+                max_y = y
+
+            for z in grid[x][y].keys():
+                if z < min_z:
+                    min_z = z
+                elif z > max_z:
+                    max_z = z
+    return {
+        "x": [min_x - 1, max_x + 1],
+        "y": [min_y - 1, max_y + 1],
+        "z": [min_z - 1, max_z + 1],
+    }
 
 
 # low: 1758
 def part2(
     grid: Mapping[int, Mapping[int, Mapping[int, bool]]], coords: List[List[int]]
 ):
+    # Max and min of the grid
+    ax_mm = axis_min_max(grid)
 
-    combined_outside = defaultdict(
-        lambda: defaultdict(lambda: defaultdict(lambda: False))
-    )
+    # Negative space represents the outside of the shape
+    negative = defaultdict(lambda: defaultdict(lambda: defaultdict(lambda: True)))
 
-    ax = plt.axes(projection="3d")
-    for axis in [ax.xaxis, ax.yaxis]:
-        axis.set_major_locator(ticker.MaxNLocator(integer=True))
+    negative_spaces = [[0, 0, 0]]
+    for space in negative_spaces:
+        negative[space[0]][space[1]][space[2]] = False
+        for n in neighbors(space):
+            # Check that the neighbor is within the grid
+            if n[0] < ax_mm["x"][0] or n[0] > ax_mm["x"][1]:
+                continue
+            elif n[1] < ax_mm["y"][0] or n[1] > ax_mm["y"][1]:
+                continue
+            elif n[2] < ax_mm["z"][0] or n[2] > ax_mm["z"][1]:
+                continue
+            # Check that the neighbor is not already in the negative space
+            if n in negative_spaces:
+                continue
+            else:
+                # Check if the neighbor is occupied in the shape
+                if not occupied(grid, n[0], n[1], n[2]):
+                    negative_spaces.append(n)
 
-    new_coords = []
-
-    for x in grid.keys():
-        for y in grid[x].keys():
-            min_z = min(grid[x][y].keys())
-            max_z = max(grid[x][y].keys())
-            for z in [z for z in range(min_z, max_z + 1)]:
-                combined_outside[x][y][z] = True
-                ax.scatter(x, y, z, c="blue", linewidth=10)
-                new_coords.append([x, y, z])
-
-    for x in grid.keys():
-        for y in grid[x].keys():
-            for z in grid[x][y].keys():
-                ax.scatter(x, y, z, c="red", linewidth=5)
-
-    # count = 0
-    # for c in new_coords:
-    #     edges = exposedEdges(combined_outside, c)
-    #     count += edges
-
-    # write_output(output_file2, f"{count}")
-    plt.show()
+    count = 0
+    for xyz in coords:
+        count += exposed_edges(negative, xyz)
+    write_output(output_file2, f"{count}")
 
 
 def main():
     coords = digest_input(input_file)
     grid = generate_grid(coords)
 
-    # part1(grid, coords)
+    part1(grid, coords)
     part2(grid, coords)
 
 
