@@ -1,6 +1,5 @@
 from typing import Union, List, Mapping, Dict
 import base64
-from itertools import cycle
 
 
 def write_output(file: str, value: str):
@@ -16,7 +15,7 @@ input_file = "./test_input.txt"
 # input_file = "./input.txt"
 
 
-class cycler:
+class mixer:
     def __init__(self, numbers: List[int]):
         self.numbers = numbers
         self.idx = 0
@@ -25,46 +24,56 @@ class cycler:
     def seek(self, id: int):
         self.idx = self.numbers.index(id)
 
-    def step(self, id: int, n: int):
+    def mix(self, id: int, n: int):
         # if n is equal to zero, do nothing
         if n == 0:
             return
 
-        # find the index of the id
-        self.seek(id)
-        # save the found index as we will need it after finding where to move to
-        current_idx = self.current_idx()
-
-        # determine how many steps to take
-        # If the steps are in the negative direction, we need to account for zero
-        # So we subtract one from the steps therefore adding an extra step
-        steps = (self.idx + n) % self.length
-        if n < 0:
-            steps -= 1
-
-        self.idx = steps
-
+        new_index = self._step(id, n)
         # rebuild the list using self.index as the new index and current_index as the value to insert
-        self._rebuild(current_idx)
+        self._move_current_to(new_index)
 
-    def current_idx(self):
-        return self.idx
+    def _step(self, id: int, n: int):
+        # step will always be a number more or less than 0.
+        # step forward = (i + v) % len
+        # step backwards = (-1(((len - (i + v)) % len) + len) % len
+
+        # set the current index to the index of the id
+        self.seek(id)
+
+        if n > 0:
+            new_index = (self.idx + n) % self.length
+        else:
+            new_index = (
+                -1 * ((self.length - (self.idx + n)) % self.length) + self.length
+            ) % self.length
+        return new_index
+
+    def _index_value(self, index: int):
+        return self.numbers[index]
+
+    def _move_current_to(self, new_index: int):
+        current_value = self.numbers.pop(self.idx)
+        print(f"moving {current_value} to {new_index}")
+        if new_index == 0:
+            self.numbers = [current_value] + self.numbers
+        elif new_index == self.length - 1:
+            self.numbers = self.numbers + [current_value]
+        else:
+            new_index -= 1
+            self.numbers = (
+                self.numbers[:new_index] + [current_value] + self.numbers[new_index:]
+            )
 
     def current_state(self):
         return self.numbers
-
-    def _rebuild(self, current_index: int):
-        current = self.numbers.pop(current_index)
-        self.numbers = self.numbers[: self.idx] + [current] + self.numbers[self.idx :]
 
     def decrypt(self, start: id, steps: List[int]):
         cords = []
 
         for step in steps:
-            self.step(start, step)
-            cords.append(self.current_idx())
-
-        print(f"found cords {cords}")
+            collect_from = self._step(start, step)
+            cords.append(self._index_value(collect_from))
 
         return cords
 
@@ -74,11 +83,15 @@ def part1(numbers: List[int]):
 
     idx_list = list(range(len(numbers)))
 
-    # make a cycler
-    c = cycler(idx_list.copy())
+    # make a mixer
+    c = mixer(list(range(len(numbers))))
 
+    print([numbers[x] for x in c.current_state()])
     for id in idx_list:
-        c.step(id, numbers[id])
+        print(f"mixing {numbers[id]} as id {id}")
+        c.mix(id, numbers[id])
+        print([numbers[x] for x in c.current_state()])
+        print("---")
 
     print([numbers[x] for x in c.current_state()])
 
